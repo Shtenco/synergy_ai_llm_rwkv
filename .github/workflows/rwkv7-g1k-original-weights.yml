@@ -1,6 +1,9 @@
 name: Mirror verified RWKV7 G1i 2.9B checkpoint
 on:
   workflow_dispatch:
+  push:
+    branches: [feature/rwkv7-original-weights]
+    paths: ['.github/workflows/rwkv7-g1k-original-weights.yml']
 permissions:
   contents: write
 jobs:
