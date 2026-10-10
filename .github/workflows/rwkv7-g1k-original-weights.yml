@@ -1,0 +1,33 @@
+name: Mirror RWKV7 G1k 2.9B original checkpoint
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/rwkv7-original-weights]
+    paths: ['.github/workflows/rwkv7-g1k-original-weights.yml']
+permissions:
+  contents: write
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Download, verify, split
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p pieces
+          URL="https://huggingface.co/BlinkDL/rwkv7-g1/resolve/main/rwkv7-g1k-2.9b-20260930-ctx25600.pth"
+          curl --fail --location --retry 5 --retry-delay 10 "$URL" --output checkpoint.pth
+          echo "d8f8ecd4af8d706f867ac8a74284f35c0e3b9f863e7b09bb4d4031480c8b28b2  checkpoint.pth" | sha256sum -c -
+          split -b 1500M -d -a 3 checkpoint.pth pieces/rwkv7-g1k-2.9b-20260930-ctx25600.pth.part-
+          sha256sum pieces/* > pieces/SHA256SUMS.parts
+          printf '%s\n' 'Original source: BlinkDL/rwkv7-g1' 'Original file: rwkv7-g1k-2.9b-20260930-ctx25600.pth' 'Original SHA256: d8f8ecd4af8d706f867ac8a74284f35c0e3b9f863e7b09bb4d4031480c8b28b2' 'Restore: cat rwkv7-g1k-2.9b-20260930-ctx25600.pth.part-* > checkpoint.pth; sha256sum checkpoint.pth' > pieces/RESTORE.txt
+          rm checkpoint.pth
+      - name: Create release and upload split original weights
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create rwkv7-g1k-2.9b-original-20260930 --repo "${{ github.repository }}" --title "RWKV7 G1k 2.9B ORIGINAL weights (split, SHA256 verified)" --notes "Source: https://huggingface.co/BlinkDL/rwkv7-g1 . Original SHA256: d8f8ecd4af8d706f867ac8a74284f35c0e3b9f863e7b09bb4d4031480c8b28b2 . Reassemble ordered parts with cat; validate full SHA256." || true
+          gh release upload rwkv7-g1k-2.9b-original-20260930 pieces/* --repo "${{ github.repository }}" --clobber
