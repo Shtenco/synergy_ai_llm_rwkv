@@ -1,0 +1,81 @@
+name: Mirror original RWKV7 G1i 2.9B weights to GitHub Releases
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/rwkv7-g1i-2.9b-original-weights.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Download official weights and calculate SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade huggingface_hub hf_xet
+          mkdir -p pieces
+          python - <<'PY'
+          from huggingface_hub import hf_hub_download
+          from pathlib import Path
+          import hashlib
+          name="rwkv7-g1i-2.9b-20260805-ctx16384.pth"
+          path=Path(hf_hub_download(repo_id="BlinkDL/rwkv7-g1",filename=name))
+          chunk=1500*1024*1024
+          h=hashlib.sha256()
+          f=open(path,"rb")
+          i=0
+          with open("pieces/PARTS_SHA256SUMS","w") as manifest:
+            while True:
+              data=f.read(8*1024*1024)
+              if not data: break
+              # stream and split without duplicating original checkpoint
+              if i==0 or offset==chunk:
+                if i: out.close()
+                part=f"{name}.part-{i:03d}"
+                out=open(Path("pieces")/part,"wb")
+                part_hash=hashlib.sha256()
+                offset=0
+                i+=1
+              todo=memoryview(data)
+              while len(todo):
+                if offset==chunk:
+                  out.close()
+                  print(part_hash.hexdigest(),part,file=manifest)
+                  part=f"{name}.part-{i:03d}"
+                  out=open(Path("pieces")/part,"wb")
+                  part_hash=hashlib.sha256()
+                  offset=0
+                  i+=1
+                take=min(len(todo),chunk-offset)
+                b=todo[:take]
+                out.write(b)
+                part_hash.update(b)
+                h.update(b)
+                offset+=take
+                todo=todo[take:]
+            if i:
+              out.close()
+              print(part_hash.hexdigest(),part,file=manifest)
+          (Path("pieces")/"ORIGINAL_SHA256SUMS").write_text(f"{h.hexdigest()}  {name}\n")
+          (Path("pieces")/"RESTORE.txt").write_text(
+            "Official source: https://huggingface.co/BlinkDL/rwkv7-g1\n"
+            f"Original file: {name}\n"
+            f"Original SHA256: {h.hexdigest()}\n"
+            f"Restore: cat {name}.part-* > {name}\n"
+            "Then verify with sha256sum -c ORIGINAL_SHA256SUMS\n"
+          )
+          print("SHA256:",h.hexdigest(),"parts:",i)
+          PY
+      - name: Upload original, losslessly split weights to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=rwkv7-g1i-2.9b-original-20260805
+          gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || gh release create "$TAG" --repo "${{ github.repository }}" --title "RWKV-7 G1i 2.9B original BF16 weights, checksum verified" --notes "Source: https://huggingface.co/BlinkDL/rwkv7-g1 - original checkpoint split without recompression or quantization. SHA256 included."
+          gh release upload "$TAG" pieces/* --repo "${{ github.repository }}" --clobber
